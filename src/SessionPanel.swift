@@ -86,22 +86,25 @@ struct SessionPanel: View {
                                     )
                                 }
                             )
-                        Divider().opacity(0.18).padding(.leading, 30)
+                        Divider().opacity(0.12).padding(.leading, 32)
                     }
                     if !done.isEmpty {
-                        HStack {
+                        HStack(spacing: 5) {
+                            Rectangle()
+                                .fill(Color(red: 0.30, green: 0.72, blue: 0.45).opacity(0.5))
+                                .frame(width: 2.5, height: 9)
                             Text("最近完成")
                                 .font(.custom("PingFang SC Medium", size: 9.5))
-                                .foregroundColor(Color(red: 0.55, green: 0.60, blue: 0.68))
+                                .foregroundColor(Color(red: 0.45, green: 0.51, blue: 0.60))
                             Spacer()
                         }
                         .padding(.horizontal, 12)
-                        .padding(.top, 7)
-                        .padding(.bottom, 3)
+                        .padding(.top, 9)
+                        .padding(.bottom, 4)
 
                         ForEach(done.prefix(3)) { s in
                             SessionRowView(row: s, onOpen: onOpen)
-                            Divider().opacity(0.14).padding(.leading, 30)
+                            Divider().opacity(0.10).padding(.leading, 32)
                         }
                     }
                 }
@@ -116,8 +119,8 @@ struct SessionPanel: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(red: 0.985, green: 0.99, blue: 1.0).opacity(0.98))
-                .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+                .fill(Color(red: 0.99, green: 0.995, blue: 1.0))
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 6)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -149,7 +152,8 @@ struct SessionPanel: View {
             .padding(.leading, 4)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.945, green: 0.965, blue: 0.995))
     }
 
     private var footer: some View {
@@ -187,8 +191,8 @@ struct SessionRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(row.name)
-                        .font(.custom("PingFang SC Medium", size: 12))
-                        .foregroundColor(Color(red: 0.13, green: 0.16, blue: 0.22))
+                        .font(.custom("PingFang SC Medium", size: 12.5))
+                        .foregroundColor(Color(red: 0.10, green: 0.13, blue: 0.19))
                         .lineLimit(1)
                     Spacer(minLength: 2)
                     Text(timeAgo(row.updatedAt))
@@ -197,7 +201,7 @@ struct SessionRowView: View {
                 }
                 Text(row.lastPrompt.isEmpty ? "（无提示词）" : row.lastPrompt)
                     .font(.custom("PingFang SC", size: 10))
-                    .foregroundColor(Color(red: 0.42, green: 0.46, blue: 0.53))
+                    .foregroundColor(Color(red: 0.36, green: 0.41, blue: 0.49))
                     .lineLimit(2)
                     .truncationMode(.tail)
             }

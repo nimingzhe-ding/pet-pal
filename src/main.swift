@@ -312,27 +312,27 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
 
         mouseDownAt = NSEvent.mouseLocation
         dragOrigin = window?.frame.origin
+        AppDelegate.shared?.isDragging = true
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let ws = dragOrigin, let down = mouseDownAt, let win = window else { return }
         let now = NSEvent.mouseLocation
-        var origin = NSPoint(x: ws.x + (now.x - down.x),
+        // 拖动中不钳制：屏幕之间存在缝隙（主屏顶 1084、副屏底 1117），
+        // 中途钳制会把窗口卡在边界，根本过不去。松手时再修。
+        let origin = NSPoint(x: ws.x + (now.x - down.x),
                              y: ws.y + (now.y - down.y))
-
-        // 拖出屏幕就贴边。固定用主屏判断——win.screen 在跨屏时会变，
-        // 之前就是被夹在两块屏的缝隙里，坐标跑到负数。
-        let screen = AppDelegate.shared?.primaryFrame()
-            ?? NSScreen.screens.first?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let size = win.frame.size
-        origin.x = max(screen.minX, min(origin.x, screen.maxX - size.width))
-        origin.y = max(screen.minY, min(origin.y, screen.maxY - size.height))
-
         win.setFrameOrigin(origin)
     }
 
     override func mouseUp(with event: NSEvent) {
+        AppDelegate.shared?.isDragging = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let win = self?.window, let delegate = AppDelegate.shared else { return }
+            let fixed = delegate.clampToAnyScreen(win.frame.origin, size: win.frame.size)
+            if fixed != win.frame.origin { win.setFrameOrigin(fixed) }
+        }
+
         if let down = mouseDownAt, let ws = dragOrigin, let win = window {
             let now = NSEvent.mouseLocation
             let moved = hypot(now.x - down.x, now.y - down.y)
@@ -379,10 +379,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 有提示气泡时的高度（气泡 + 鲸鱼）
     private let noticeSize = NSSize(width: 156, height: 172)
 
+    /// 拖动中：看门狗暂停，否则会把窗口每帧拉回屏幕内，跨不了屏
+    var isDragging = false
     private var walkTimer: Timer?
     private var walkFrameTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    private var isWalking = true
+    private var isWalking = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.onSessionFinished = { [weak self] info in
@@ -402,30 +404,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.applySize(hasNotice: value != nil)
             }
             .store(in: &cancellables)
-        startWalking()
-        startScreenWatchdog()
+        // 默认静止。右键菜单「开始走动」可开启。
+        if ProcessInfo.processInfo.environment["PET_WALK"] == "1" {
+            isWalking = true
+            startWalking()
+        }
+        if ProcessInfo.processInfo.environment["PET_NO_WD"] != "1" {
+            startScreenWatchdog()
+        }
     }
 
-    /// 看门狗：不管窗口因为什么原因越界，都拉回主屏
+    /// 窗口允许停靠的区域：所有屏幕可见区的并集。
+    /// 跨屏拖动是允许的，但不能掉进屏幕之间的缝隙或完全跑到外面。
+    func clampToAnyScreen(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        let screens = NSScreen.screens.map { $0.visibleFrame }
+        guard !screens.isEmpty else { return origin }
+
+        // 已经完整落在某块屏内 → 不动
+        for s in screens {
+            if origin.x >= s.minX, origin.x + size.width <= s.maxX,
+               origin.y >= s.minY, origin.y + size.height <= s.maxY {
+                return origin
+            }
+        }
+
+        // 否则吸附到「最近」的那块屏
+        let center = NSPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        var best = screens[0]
+        var bestDist = CGFloat.greatestFiniteMagnitude
+        for s in screens {
+            let dx = max(s.minX - center.x, 0, center.x - s.maxX)
+            let dy = max(s.minY - center.y, 0, center.y - s.maxY)
+            let d = dx * dx + dy * dy
+            if d < bestDist { bestDist = d; best = s }
+        }
+
+        return NSPoint(
+            x: max(best.minX, min(origin.x, best.maxX - size.width)),
+            y: max(best.minY, min(origin.y, best.maxY - size.height))
+        )
+    }
+
+    /// 看门狗：窗口掉出所有屏幕时拉回最近的一块
     private func startScreenWatchdog() {
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            guard let self, let win = self.window else { return }
-            let screen = self.primaryScreen()
-            let size = win.frame.size
-            var f = win.frame
-            var changed = false
-
-            let maxX = screen.maxX - size.width
-            let maxY = screen.maxY - size.height
-
-            if f.origin.x < screen.minX { f.origin.x = screen.minX; changed = true }
-            if f.origin.x > maxX { f.origin.x = maxX; changed = true }
-            if f.origin.y < screen.minY { f.origin.y = screen.minY; changed = true }
-            if f.origin.y > maxY { f.origin.y = maxY; changed = true }
-
-            if changed { win.setFrameOrigin(f.origin) }
+            guard let self, let win = self.window, !self.isDragging else { return }
+            let fixed = self.clampToAnyScreen(win.frame.origin, size: win.frame.size)
+            if fixed != win.frame.origin { win.setFrameOrigin(fixed) }
         }
-        // .common 模式，拖拽过程中也持续运行
         RunLoop.main.add(timer, forMode: .common)
     }
 
@@ -484,6 +510,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.makeKeyAndOrderFront(nil)
         model.window = window
+
+        // 测试用：PET_POS="x,y" 启动时定位
+        if let pos = ProcessInfo.processInfo.environment["PET_POS"] {
+            let parts = pos.split(separator: ",").compactMap { Double($0) }
+            if parts.count == 2 {
+                window.setFrameOrigin(NSPoint(x: parts[0], y: parts[1]))
+            }
+        }
         AppDelegate.shared = self
 
         // 调试：PET_EXPANDED=1 启动即展开
@@ -579,7 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         expand.target = self
         menu.addItem(expand)
 
-        let walk = NSMenuItem(title: "停止走动", action: #selector(toggleWalk(_:)), keyEquivalent: "")
+        let walk = NSMenuItem(title: "开始走动", action: #selector(toggleWalk(_:)), keyEquivalent: "")
         walk.target = self
         menu.addItem(walk)
 
@@ -629,11 +663,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 walkTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { _ in step() }
                 return
             }
-            let screen = primaryScreen()
+            // 在所有屏幕的底部条带里随机挑一个落点
             let w = window.frame.width
             let h = window.frame.height
+            let screens = NSScreen.screens.map { $0.visibleFrame }
+            guard let screen = screens.randomElement() else { return }
             let maxX = max(screen.minX, screen.maxX - w)
-            // 只在屏幕底部一条带子里活动，别满屏乱跑
             let lowY = screen.minY
             let highY = min(screen.maxY - h, screen.minY + 200)
             let target = NSPoint(
