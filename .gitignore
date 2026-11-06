@@ -1,0 +1,16 @@
+# 编译产物
+pet
+preview
+*.o
+*.dSYM/
+
+# 构建目录
+previewbuild/
+PetPal.app/
+bin/
+
+# 素材（他人画作，不上传。用 scripts/fetch-asset.sh 自行获取）
+assets/whale.png
+
+# 系统
+.DS_Store
