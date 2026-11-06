@@ -320,8 +320,9 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
         var origin = NSPoint(x: ws.x + (now.x - down.x),
                              y: ws.y + (now.y - down.y))
 
-        // 拖出屏幕就贴边，避免宠物丢到看不见的地方
-        let screen = win.screen?.visibleFrame
+        // 拖出屏幕就贴边。固定用主屏判断——win.screen 在跨屏时会变，
+        // 之前就是被夹在两块屏的缝隙里，坐标跑到负数。
+        let screen = AppDelegate.shared?.primaryFrame()
             ?? NSScreen.screens.first?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let size = win.frame.size
@@ -402,6 +403,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         startWalking()
+        startScreenWatchdog()
+    }
+
+    /// 看门狗：不管窗口因为什么原因越界，都拉回主屏
+    private func startScreenWatchdog() {
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self, let win = self.window else { return }
+            let screen = self.primaryScreen()
+            let size = win.frame.size
+            var f = win.frame
+            var changed = false
+
+            let maxX = screen.maxX - size.width
+            let maxY = screen.maxY - size.height
+
+            if f.origin.x < screen.minX { f.origin.x = screen.minX; changed = true }
+            if f.origin.x > maxX { f.origin.x = maxX; changed = true }
+            if f.origin.y < screen.minY { f.origin.y = screen.minY; changed = true }
+            if f.origin.y > maxY { f.origin.y = maxY; changed = true }
+
+            if changed { win.setFrameOrigin(f.origin) }
+        }
+        // .common 模式，拖拽过程中也持续运行
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func buildWindow() {
@@ -459,6 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.makeKeyAndOrderFront(nil)
         model.window = window
+        AppDelegate.shared = self
 
         // 调试：PET_EXPANDED=1 启动即展开
         if ProcessInfo.processInfo.environment["PET_EXPANDED"] == "1" {
@@ -649,10 +675,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         walkFrameTimer = frameTimer
     }
 
+    static weak var shared: AppDelegate?
+
+    /// 主屏可见区域
+    func primaryFrame() -> NSRect { primaryScreen() }
+
     /// 主屏：有菜单栏的那块（frame 原点为 0,0）
     private func primaryScreen() -> NSRect {
+        // 有菜单栏的那块屏：frame 原点为 (0,0)。
+        // 不用 NSScreen.main——它会跟着焦点或鼠标跑，多屏时不可靠。
         let s = NSScreen.screens.first { $0.frame.origin == .zero }
-            ?? NSScreen.main
             ?? NSScreen.screens.first
         return s?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }
