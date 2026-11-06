@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""pet-bridge — 把 Claude Code 的状态写给桌面宠物
+
+用法:
+  pet-bridge idle                     # 空闲
+  pet-bridge thinking                 # 开始思考
+  pet-bridge working "Bash"           # 正在用某工具
+  pet-bridge happy                    # 回合完成
+  pet-bridge tired                    # 累
+  pet-bridge error                    # 出错
+  pet-bridge stats --turns +1 --tools +2 --tokens 1200
+  pet-bridge show                     # 打印当前状态
+"""
+import argparse
+import json
+import os
+import sys
+import time
+
+STATE = os.path.expanduser("~/.claude/pet-state.json")
+
+DEFAULT = {
+    "phase": "idle",
+    "level": 1,
+    "xp": 0,
+    "xpNeed": 65,
+    "bond": 0,
+    "turns": 0,
+    "tools": 0,
+    "outputTokens": 0,
+    "runningTool": None,
+    "turnStartedAt": 0,
+    "lastTurnMs": 0,
+    "updatedAt": 0,
+}
+
+
+def xp_for_level(level: int) -> int:
+    return 40 + level * 25
+
+
+def load() -> dict:
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            data = json.load(f)
+        for k, v in DEFAULT.items():
+            data.setdefault(k, v)
+        return data
+    except (OSError, json.JSONDecodeError):
+        return dict(DEFAULT)
+
+
+def save(data: dict) -> None:
+    data["updatedAt"] = time.time()
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, STATE)
+
+
+def cmd_phase(args) -> int:
+    data = load()
+    phase = args.phase
+    data["phase"] = phase
+
+    if phase == "thinking":
+        data["turnStartedAt"] = time.time() * 1000
+        data["runningTool"] = None
+    elif phase == "working" and args.tool:
+        data["runningTool"] = args.tool
+    elif phase == "idle":
+        data["turnStartedAt"] = 0
+        data["runningTool"] = None
+    elif phase == "happy":
+        data["turns"] += 1
+        data["bond"] = min(100, data["bond"] + 1)
+        data["xp"] += 6
+        while data["xp"] >= xp_for_level(data["level"]):
+            data["xp"] -= xp_for_level(data["level"])
+            data["level"] += 1
+        if data["turnStartedAt"]:
+            data["lastTurnMs"] = time.time() * 1000 - data["turnStartedAt"]
+        data["turnStartedAt"] = 0
+        data["runningTool"] = None
+    data["xpNeed"] = xp_for_level(data["level"])
+
+    save(data)
+    if args.quiet:
+        return 0
+    print(f"🐾 {phase}" + (f" ({args.tool})" if args.tool else ""))
+    return 0
+
+
+def cmd_stats(args) -> int:
+    data = load()
+    for field, delta in (
+        ("turns", args.turns),
+        ("tools", args.tools),
+        ("outputTokens", args.tokens),
+        ("bond", args.bond),
+    ):
+        if delta:
+            data[field] = max(0, data[field] + delta)
+    data["xpNeed"] = xp_for_level(data["level"])
+    save(data)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_show(_args) -> int:
+    data = load()
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_reset(_args) -> int:
+    save(dict(DEFAULT))
+    print("已重置")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="pet-bridge", description="Claude Code 状态桥")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    ph = sub.add_parser("idle", help="空闲")
+    ph.set_defaults(fn=cmd_phase, phase="idle", tool=None)
+    for name in ("thinking", "happy", "tired", "error"):
+        s = sub.add_parser(name)
+        s.set_defaults(fn=cmd_phase, phase=name, tool=None)
+
+    w = sub.add_parser("working")
+    w.add_argument("tool", nargs="?")
+    w.set_defaults(fn=cmd_phase, phase="working")
+
+    st = sub.add_parser("stats")
+    st.add_argument("--turns", type=int, default=0)
+    st.add_argument("--tools", type=int, default=0)
+    st.add_argument("--tokens", type=int, default=0)
+    st.add_argument("--bond", type=int, default=0)
+    st.set_defaults(fn=cmd_stats)
+
+    sh = sub.add_parser("show")
+    sh.set_defaults(fn=cmd_show)
+    rs = sub.add_parser("reset")
+    rs.set_defaults(fn=cmd_reset)
+
+    # 全局 --quiet 只对 phase 子命令有意义
+    argv = sys.argv[1:]
+    quiet = "--quiet" in argv
+    argv = [a for a in argv if a != "--quiet"]
+    args = p.parse_args(argv)
+    args.quiet = quiet
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

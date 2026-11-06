@@ -1,0 +1,129 @@
+#!/bin/bash
+# petpal — 控制桌面宠物鲸鱼娘
+#
+#   petpal on       打开宠物（并设为登录自启）
+#   petpal off      关闭宠物（同时取消登录自启）
+#   petpal status   查看当前状态
+#   petpal restart  重启
+#   petpal autostart on|off   只控制自启，不带启停
+#
+# 安装：ln -sf ~/.claude/pet-desktop/petpal ~/.local/bin/petpal
+
+set -uo pipefail
+
+BIN="$HOME/.claude/pet-desktop/bin/petpal"
+PLIST="$HOME/Library/LaunchAgents/local.petpal.plist"
+LABEL="local.petpal"
+
+green=$'\033[32m'; yellow=$'\033[33m'; dim=$'\033[2m'; reset=$'\033[0m'
+
+is_running() {
+    pgrep -f "pet-desktop/bin/petpal" >/dev/null 2>&1
+}
+
+is_loaded() {
+    launchctl list 2>/dev/null | grep -q "$LABEL"
+}
+
+cmd_status() {
+    if is_running; then
+        local pid
+        pid=$(pgrep -f "pet-desktop/bin/petpal" | head -1)
+        echo "${green}● 运行中${reset}  (pid $pid)"
+    else
+        echo "${dim}○ 未运行${reset}"
+    fi
+
+    if is_loaded; then
+        echo "  登录自启: ${green}已开启${reset}"
+    else
+        echo "  登录自启: ${dim}未开启${reset}"
+    fi
+}
+
+cmd_on() {
+    [[ -x "$BIN" ]] || { echo "找不到可执行文件: $BIN" >&2; exit 1; }
+
+    if is_running; then
+        echo "${yellow}已经在运行了${reset}"
+        is_loaded || launchctl load "$PLIST" 2>/dev/null
+        return
+    fi
+
+    if is_loaded; then
+        # 已加载但没跑：让 launchd 拉起
+        launchctl start "$LABEL" 2>/dev/null
+    else
+        # 首次：加载 plist（RunAtLoad 会启动），同时获得自启
+        launchctl load "$PLIST" 2>/dev/null
+    fi
+
+    sleep 1.2
+    if is_running; then
+        echo "${green}✓ 宠物已开启${reset}${dim}（登录自启已开启）${reset}"
+    else
+        echo "启动失败，尝试直接运行…" >&2
+        nohup "$BIN" >/dev/null 2>&1 &
+        sleep 1
+        is_running && echo "${green}✓ 宠物已开启${reset}" || { echo "仍无法启动" >&2; exit 1; }
+    fi
+}
+
+cmd_off() {
+    # 1) 先卸载 launchd，避免它把进程再拉起来
+    if is_loaded; then
+        launchctl unload "$PLIST" 2>/dev/null
+    fi
+    # 2) 结束进程
+    pkill -f "pet-desktop/bin/petpal" 2>/dev/null
+    sleep 0.5
+    if is_running; then
+        pkill -9 -f "pet-desktop/bin/petpal" 2>/dev/null
+        sleep 0.3
+    fi
+
+    if is_running; then
+        echo "关闭失败，请手动结束进程" >&2
+        exit 1
+    else
+        echo "${green}✓ 宠物已关闭${reset}${dim}（登录自启也已取消）${reset}"
+    fi
+}
+
+cmd_restart() {
+    cmd_off >/dev/null 2>&1
+    sleep 0.3
+    cmd_on
+}
+
+cmd_autostart() {
+    case "${1:-}" in
+        on)
+            launchctl load "$PLIST" 2>/dev/null
+            echo "${green}✓ 已设为登录时自动开启${reset}"
+            ;;
+        off)
+            launchctl unload "$PLIST" 2>/dev/null
+            echo "${green}✓ 已取消登录自启${reset}${dim}（当前运行的宠物不受影响）${reset}"
+            ;;
+        *)
+            echo "用法: petpal autostart on|off" >&2
+            exit 1
+            ;;
+    esac
+}
+
+case "${1:-}" in
+    on)        cmd_on ;;
+    off)       cmd_off ;;
+    status)    cmd_status ;;
+    restart)   cmd_restart ;;
+    autostart) shift; cmd_autostart "${1:-}" ;;
+    ""|-h|--help|help)
+        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        echo "未知命令: $1（用 petpal help 查看用法）" >&2
+        exit 1
+        ;;
+esac
