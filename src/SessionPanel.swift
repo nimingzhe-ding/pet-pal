@@ -179,10 +179,26 @@ struct SessionRowView: View {
 
     private var isBusy: Bool { row.status == "busy" }
 
+    /// 刚结束不久（5 分钟内）：还没归入「已完成」，但也不算在跑
+    private var isIdleRecent: Bool {
+        guard !row.isDone, !isBusy else { return false }
+        let secs = (Date().timeIntervalSince1970 * 1000 - row.updatedAt) / 1000
+        return secs < 300
+    }
+
     private var accent: Color {
         if row.isDone { return Color(red: 0.30, green: 0.72, blue: 0.45) }
         if isBusy { return Color(red: 0.98, green: 0.62, blue: 0.28) }
+        if isIdleRecent { return Color(red: 0.72, green: 0.76, blue: 0.84) }
         return Color(red: 0.55, green: 0.62, blue: 0.72)
+    }
+
+    /// 状态标签文字
+    private var statusLabel: String? {
+        if row.isDone { return nil }
+        if isBusy { return "进行中" }
+        if isIdleRecent { return "刚结束" }
+        return nil
     }
 
     var body: some View {
@@ -194,6 +210,14 @@ struct SessionRowView: View {
                         .font(.custom("PingFang SC Medium", size: 12.5))
                         .foregroundColor(Color(red: 0.10, green: 0.13, blue: 0.19))
                         .lineLimit(1)
+                    if let label = statusLabel {
+                        Text(label)
+                            .font(.custom("PingFang SC", size: 8.5))
+                            .foregroundColor(accent)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(accent.opacity(0.14)))
+                    }
                     Spacer(minLength: 2)
                     Text(timeAgo(row.updatedAt))
                         .font(.custom("PingFang SC", size: 9))
@@ -235,6 +259,11 @@ struct SessionRowView: View {
                             .stroke(accent.opacity(0.35), lineWidth: 3.5)
                             .scaleEffect(1.7)
                     )
+            } else if isIdleRecent {
+                // 刚结束：实心浅灰，比空心圈更有存在感
+                Circle()
+                    .fill(accent)
+                    .frame(width: 7, height: 7)
             } else {
                 Circle()
                     .strokeBorder(accent, lineWidth: 1.5)
