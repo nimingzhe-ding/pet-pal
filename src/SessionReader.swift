@@ -41,15 +41,17 @@ enum SessionReader {
             var prompt = ""
 
             // 从 projects 里找同名 jsonl 补标题与最后提示
+            var activity = updatedAt
             if let meta = readMeta(sessionId: sid) {
                 if !meta.title.isEmpty { name = meta.title }
                 prompt = meta.lastPrompt
+                if meta.mtime > 0 { activity = meta.mtime }   // 用文件改动时间当活跃度
             }
             if name.isEmpty { name = String(sid.prefix(8)) }
 
             // 判定「已完成」：busy 之外的会话，且已安静超过 3 分钟
             let nowMs = Date().timeIntervalSince1970 * 1000
-            let idleMs = nowMs - updatedAt
+            let idleMs = nowMs - activity
             let isDone = (status != "busy") && idleMs > 3 * 60 * 1000
 
             let pid = (obj["pid"] as? Int) ?? 0
@@ -61,7 +63,7 @@ enum SessionReader {
                     name: name,
                     cwd: cwd,
                     status: status,
-                    updatedAt: updatedAt,
+                    updatedAt: activity,
                     lastPrompt: prompt,
                     isDone: isDone
                 )
@@ -74,7 +76,8 @@ enum SessionReader {
     }
 
     /// 从会话的 jsonl 里读 custom-title / agent-name / last-prompt
-    private static func readMeta(sessionId: String) -> (title: String, lastPrompt: String)? {
+    private static func readMeta(sessionId: String)
+        -> (title: String, lastPrompt: String, mtime: Double)? {
         let projects = home.appendingPathComponent(".claude/projects")
         guard let dirs = try? FileManager.default.contentsOfDirectory(atPath: projects.path) else {
             return nil
@@ -83,7 +86,12 @@ enum SessionReader {
         for d in dirs {
             let file = projects.appendingPathComponent(d).appendingPathComponent("\(sessionId).jsonl")
             guard FileManager.default.fileExists(atPath: file.path) else { continue }
-            return parseMeta(file)
+            let parsed = parseMeta(file)
+            // 用文件修改时间当活跃度：sessions/*.json 里的 updatedAt 不随对话更新，
+            // 只会在状态切换时写一次，拿它排序会一直把当前活跃会话排到后面。
+            let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
+            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            return (parsed.title, parsed.lastPrompt, mtime * 1000)
         }
         return nil
     }

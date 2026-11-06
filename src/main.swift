@@ -290,6 +290,7 @@ struct PetWithPanel: View {
         .frame(width: model.isExpanded ? 268 : 156,
                height: model.isExpanded ? 492 : (model.notice != nil ? 172 : 124),
                alignment: .topLeading)
+        .coordinateSpace(name: "winroot")
     }
 }
 
@@ -306,9 +307,19 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
     private var dragOrigin: NSPoint?
     private var mouseDownAt: NSPoint?
 
+    /// 屏幕坐标 → 窗口内 AppKit 坐标（原点左下）
+    private func windowLocalPoint(from event: NSEvent) -> NSPoint {
+        guard let win = window else { return .zero }
+        let screenPt = NSEvent.mouseLocation          // 屏幕坐标，原点左下
+        let winOrigin = win.frame.origin
+        return NSPoint(x: screenPt.x - winOrigin.x,
+                       y: screenPt.y - winOrigin.y)
+    }
+
     override func mouseDown(with event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
-        if onHit?(p) == true { return }
+        // 用屏幕坐标自己算，不用 convert —— 浮动窗口上它不可靠
+        let local = windowLocalPoint(from: event)
+        if onHit?(local) == true { return }
 
         mouseDownAt = NSEvent.mouseLocation
         dragOrigin = window?.frame.origin

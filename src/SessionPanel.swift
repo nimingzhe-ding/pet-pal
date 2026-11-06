@@ -82,7 +82,7 @@ struct SessionPanel: View {
                                 GeometryReader { g in
                                     Color.clear.preference(
                                         key: RowFrameKey.self,
-                                        value: [RowFrame(index: idx, rect: g.frame(in: .global))]
+                                        value: [RowFrame(index: idx, rect: g.frame(in: .named("winroot")))]
                                     )
                                 }
                             )
