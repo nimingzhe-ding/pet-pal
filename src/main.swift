@@ -299,6 +299,8 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
     var onHit: ((NSPoint) -> Bool)? = nil
     /// 鲸鱼娘本体被点击（非拖动、非会话行）
     var onBodyTap: (() -> Void)? = nil
+    /// 右键时提供菜单
+    var menuProvider: (() -> NSMenu)? = nil
 
     private var dragOrigin: NSPoint?
     private var mouseDownAt: NSPoint?
@@ -328,6 +330,15 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
         }
         dragOrigin = nil
         mouseDownAt = nil
+    }
+
+    /// 右键菜单：HostingView 会吞掉事件，必须在它自己身上弹
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = menuProvider?() else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -416,6 +427,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.onBodyTap = { [weak self] in
             self?.toggleExpanded()
         }
+        host.menuProvider = { [weak self] in
+            self?.makeMenu() ?? NSMenu()
+        }
         host.translatesAutoresizingMaskIntoConstraints = true
         host.autoresizingMask = [.width, .height]
         host.wantsLayer = true
@@ -425,7 +439,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.needsLayout = true
         host.layoutSubtreeIfNeeded()
 
-        buildMenu()
         // 确保窗口在屏内
         var safe = window.frame
         safe.origin.x = max(screen.minX, min(safe.origin.x, screen.maxX - collapsedSize.width))
@@ -521,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: 右键菜单
 
-    private func buildMenu() {
+    private func makeMenu() -> NSMenu {
         let menu = NSMenu()
 
         let expand = NSMenuItem(title: "展开会话面板", action: #selector(expandPanel), keyEquivalent: "e")
@@ -537,10 +550,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(corner)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "退出宠物", action: #selector(quitApp), keyEquivalent: "q")
+        quit.target = self
         menu.addItem(quit)
 
-        window.menu = menu
+        return menu
+    }
+
+    @objc private func quitApp() {
+        model.isExpanded = false
+        NSApp.terminate(nil)
     }
 
     @objc private func expandPanel() {
