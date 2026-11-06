@@ -40,6 +40,7 @@ final class PetModel: ObservableObject {
 
     private var pollTimer: Timer?
     private var walkTimer: Timer?
+    private var walkFrameTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private let stateURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/pet-state.json")
@@ -314,10 +315,20 @@ final class ClickableHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let ws = dragOrigin, let down = mouseDownAt else { return }
+        guard let ws = dragOrigin, let down = mouseDownAt, let win = window else { return }
         let now = NSEvent.mouseLocation
-        window?.setFrameOrigin(NSPoint(x: ws.x + (now.x - down.x),
-                                       y: ws.y + (now.y - down.y)))
+        var origin = NSPoint(x: ws.x + (now.x - down.x),
+                             y: ws.y + (now.y - down.y))
+
+        // 拖出屏幕就贴边，避免宠物丢到看不见的地方
+        let screen = win.screen?.visibleFrame
+            ?? NSScreen.screens.first?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = win.frame.size
+        origin.x = max(screen.minX, min(origin.x, screen.maxX - size.width))
+        origin.y = max(screen.minY, min(origin.y, screen.maxY - size.height))
+
+        win.setFrameOrigin(origin)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -368,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let noticeSize = NSSize(width: 156, height: 172)
 
     private var walkTimer: Timer?
+    private var walkFrameTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var isWalking = true
 
@@ -591,24 +603,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 walkTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { _ in step() }
                 return
             }
-            let screen = NSScreen.main?.visibleFrame ?? .zero
+            let screen = primaryScreen()
             let w = window.frame.width
+            let h = window.frame.height
             let maxX = max(screen.minX, screen.maxX - w)
-            let maxY = max(screen.minY, screen.minY + 140)
-            let targetX = CGFloat.random(in: screen.minX...maxX)
-            let targetY = CGFloat.random(in: screen.minY...maxY)
-            model.facing = targetX >= window.frame.origin.x ? 1 : -1
+            // 只在屏幕底部一条带子里活动，别满屏乱跑
+            let lowY = screen.minY
+            let highY = min(screen.maxY - h, screen.minY + 200)
+            let target = NSPoint(
+                x: CGFloat.random(in: screen.minX...maxX),
+                y: CGFloat.random(in: lowY...max(lowY, highY))
+            )
+            model.facing = target.x >= window.frame.origin.x ? 1 : -1
 
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = Double.random(in: 3.5...6.0)
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                window.animator().setFrameOrigin(NSPoint(x: targetX, y: targetY))
-            }
-            walkTimer = Timer.scheduledTimer(withTimeInterval: Double.random(in: 10...18), repeats: false) { _ in
-                step()
+            slideWindow(to: target, seconds: Double.random(in: 3.5...6.0)) { [weak self] _ in
+                self?.walkTimer = Timer.scheduledTimer(withTimeInterval: Double.random(in: 10...18),
+                                                       repeats: false) { _ in step() }
             }
         }
         walkTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { _ in step() }
+    }
+
+    /// 逐帧移动窗口。无边框窗口上 NSAnimationContext 不可靠，自己算帧更稳。
+    private func slideWindow(to target: NSPoint, seconds: Double, done: @escaping (Bool) -> Void) {
+        let start = window.frame.origin
+        let startTime = ProcessInfo.processInfo.systemUptime
+        var frameTimer: Timer?
+
+        frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - startTime
+            let raw = min(1.0, elapsed / seconds)
+            // easeInOut
+            let t = raw < 0.5 ? 2 * raw * raw : 1 - pow(-2 * raw + 2, 2) / 2
+
+            let x = start.x + (target.x - start.x) * t
+            let y = start.y + (target.y - start.y) * t
+            self.window.setFrameOrigin(NSPoint(x: x, y: y))
+
+            if raw >= 1.0 {
+                timer.invalidate()
+                done(true)
+            }
+        }
+        walkFrameTimer = frameTimer
+    }
+
+    /// 主屏：有菜单栏的那块（frame 原点为 0,0）
+    private func primaryScreen() -> NSRect {
+        let s = NSScreen.screens.first { $0.frame.origin == .zero }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        return s?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     private func playDoneSound() {
